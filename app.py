@@ -106,20 +106,44 @@ ECONOMIC_SCENARIOS = {
 def load_sales_data():
     """Load semiconductor sales data from GSR1976November2023 1.xls file"""
     try:
-        # Try to read the uploaded Excel file
-        import xlrd
-        import openpyxl
+        # Try multiple approaches to read the Excel file
+        df_excel = None
         
-        # First try to read with pandas
+        # First try with openpyxl engine (most reliable)
         try:
-            # Try different engines for Excel reading
-            df_excel = pd.read_excel('GSR1976November2023 1.xls', sheet_name='Averages 1976 - present', header=None)
-            st.info("✅ Successfully loaded Excel file with pandas")
-        except:
-            st.error("❌ Could not read Excel file. Please ensure GSR1976November2023 1.xls is in your project directory")
+            df_excel = pd.read_excel('GSR1976November2023 1.xls', 
+                                   sheet_name='Averages 1976 - present', 
+                                   header=None, 
+                                   engine='openpyxl')
+            st.info("✅ Successfully loaded Excel file with openpyxl engine")
+        except Exception as e1:
+            st.warning(f"openpyxl failed: {e1}")
+            
+            # Try with xlrd engine
+            try:
+                df_excel = pd.read_excel('GSR1976November2023 1.xls', 
+                                       sheet_name='Averages 1976 - present', 
+                                       header=None, 
+                                       engine='xlrd')
+                st.info("✅ Successfully loaded Excel file with xlrd engine")
+            except Exception as e2:
+                st.warning(f"xlrd failed: {e2}")
+                
+                # Try without specifying engine (let pandas decide)
+                try:
+                    df_excel = pd.read_excel('GSR1976November2023 1.xls', 
+                                           sheet_name='Averages 1976 - present', 
+                                           header=None)
+                    st.info("✅ Successfully loaded Excel file with default engine")
+                except Exception as e3:
+                    st.error(f"All Excel reading methods failed: {e3}")
+                    return create_fallback_sales_data()
+        
+        if df_excel is None:
+            st.error("❌ Could not read Excel file with any method")
             return create_fallback_sales_data()
         
-        # Process the Excel data based on the structure we analyzed
+        # Process the Excel data
         raw_data = df_excel.values.tolist()
         
         months = ['January', 'February', 'March', 'April', 'May', 'June', 
@@ -131,7 +155,7 @@ def load_sales_data():
         
         # Process the data row by row
         for i, row in enumerate(raw_data):
-            if not row or all(pd.isna(cell) for cell in row):
+            if not row or all(pd.isna(cell) if pd.notna(cell) else True for cell in row):
                 continue
             
             # Check if this is a year row (year in column 1, index 1)
@@ -191,6 +215,14 @@ def load_sales_data():
     except Exception as e:
         st.error(f"❌ Error reading Excel file: {str(e)}")
         st.info("🔄 Using fallback sales data for demonstration")
+        
+        # Show detailed error info for debugging
+        st.markdown("**💡 Troubleshooting suggestions:**")
+        st.text("• Make sure GSR1976November2023 1.xls is in your project directory")
+        st.text("• Try converting the .xls file to .xlsx format")
+        st.text("• Use the 'Upload Excel File' option instead")
+        st.text("• Or use 'Demo Data' to see all features")
+        
         return create_fallback_sales_data()
 
 def create_fallback_sales_data():
@@ -260,8 +292,33 @@ def create_fallback_sales_data():
 def process_uploaded_excel_file(file_contents, file_name):
     """Process uploaded Excel file contents (cached function without widgets)"""
     try:
-        # Read the uploaded Excel file
-        df_excel = pd.read_excel(file_contents, sheet_name='Averages 1976 - present', header=None)
+        # Try multiple approaches to read the Excel file
+        df_excel = None
+        
+        # First try with openpyxl engine (most reliable for modern Excel files)
+        try:
+            df_excel = pd.read_excel(file_contents, 
+                                   sheet_name='Averages 1976 - present', 
+                                   header=None, 
+                                   engine='openpyxl')
+        except Exception as e1:
+            # Try with xlrd engine (for older .xls files)
+            try:
+                df_excel = pd.read_excel(file_contents, 
+                                       sheet_name='Averages 1976 - present', 
+                                       header=None, 
+                                       engine='xlrd')
+            except Exception as e2:
+                # Try without specifying engine (let pandas decide)
+                try:
+                    df_excel = pd.read_excel(file_contents, 
+                                           sheet_name='Averages 1976 - present', 
+                                           header=None)
+                except Exception as e3:
+                    return pd.DataFrame(), f"All Excel reading methods failed. Errors: openpyxl: {e1}, xlrd: {e2}, default: {e3}"
+        
+        if df_excel is None:
+            return pd.DataFrame(), "Could not read Excel file with any method"
         
         # Process using the same logic as load_sales_data
         raw_data = df_excel.values.tolist()
@@ -275,7 +332,7 @@ def process_uploaded_excel_file(file_contents, file_name):
         
         # Process the data row by row
         for i, row in enumerate(raw_data):
-            if not row or all(pd.isna(cell) for cell in row if cell is not None):
+            if not row or all(pd.isna(cell) if pd.notna(cell) else True for cell in row):
                 continue
             
             # Check if this is a year row
