@@ -302,81 +302,21 @@ def process_uploaded_excel_file(file_contents, file_name):
                                    header=None, 
                                    engine='openpyxl')
         except Exception as e1:
-            # Try with xlrd engine (for older .xls files)
+            # Try without specifying engine (let pandas decide)
             try:
                 df_excel = pd.read_excel(file_contents, 
                                        sheet_name='Averages 1976 - present', 
-                                       header=None, 
-                                       engine='xlrd')
+                                       header=None)
             except Exception as e2:
-                # Try without specifying engine (let pandas decide)
-                try:
-                    df_excel = pd.read_excel(file_contents, 
-                                           sheet_name='Averages 1976 - present', 
-                                           header=None)
-                except Exception as e3:
-                    return pd.DataFrame(), f"All Excel reading methods failed. Errors: openpyxl: {e1}, xlrd: {e2}, default: {e3}"
+                return pd.DataFrame(), f"Could not read Excel file. Tried openpyxl: {str(e1)[:100]}..., default: {str(e2)[:100]}..."
         
         if df_excel is None:
             return pd.DataFrame(), "Could not read Excel file with any method"
         
-        # Process using the same logic as load_sales_data
-        raw_data = df_excel.values.tolist()
+        # Use the same processing function as load_sales_data
+        df_result = process_excel_data(df_excel, file_name)
         
-        months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                 'July', 'August', 'September', 'October', 'November', 'December']
-        regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
-        
-        sales_data = []
-        current_year = None
-        
-        # Process the data row by row
-        for i, row in enumerate(raw_data):
-            if not row or all(pd.isna(cell) if pd.notna(cell) else True for cell in row):
-                continue
-            
-            # Check if this is a year row
-            if len(row) > 1 and isinstance(row[1], (int, float)) and not pd.isna(row[1]):
-                potential_year = int(row[1])
-                if 1976 <= potential_year <= 2024:
-                    current_year = potential_year
-                    continue
-            
-            # Check if this is a region row
-            if len(row) > 0 and isinstance(row[0], str) and row[0] in regions and current_year:
-                region = row[0]
-                
-                # For 1976, data starts from March (index 3), for others from January (index 1)
-                start_index = 3 if current_year == 1976 else 1
-                
-                # Extract monthly data
-                for month_idx in range(12):
-                    data_index = start_index + month_idx
-                    
-                    if data_index < len(row):
-                        value = row[data_index]
-                        
-                        if isinstance(value, (int, float)) and not pd.isna(value) and value > 0:
-                            # Calculate actual month
-                            if current_year == 1976:
-                                actual_month = month_idx + 3
-                                if actual_month > 12:
-                                    continue
-                            else:
-                                actual_month = month_idx + 1
-                            
-                            if 1 <= actual_month <= 12:
-                                sales_data.append({
-                                    'year': current_year,
-                                    'month': actual_month,
-                                    'month_name': months[actual_month - 1],
-                                    'region': region,
-                                    'sales': float(value),
-                                    'date': pd.to_datetime(f'{current_year}-{actual_month:02d}-01')
-                                })
-        
-        if sales_data:
-            df_result = pd.DataFrame(sales_data)
+        if not df_result.empty:
             return df_result, f"Successfully processed {len(df_result)} sales records from {file_name}"
         else:
             return pd.DataFrame(), "No valid data found in uploaded file"
@@ -1211,8 +1151,180 @@ if st.button("🚀 Run Comprehensive Analysis"):
             fig_pie.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig_pie, use_container_width=True)
         
-        # Sales forecasting - ALWAYS run this for sales data analysis
-        st.subheader("🔮 Sales Forecasting Model")
+    # Analysis based on mode (with complete functionality restored)
+    if analysis_mode == "Sales Data Only" or (analysis_mode == "Integrated Trade & Sales" and trade_df.empty):
+        if analysis_mode == "Integrated Trade & Sales" and trade_df.empty:
+            st.warning("⚠️ Trade data not available - showing comprehensive sales analysis")
+        
+        st.subheader("💰 Comprehensive Semiconductor Sales Analysis (1976-2021)")
+        
+        # Add sales data debug option
+        debug_sales_data(sales_df)
+        
+        # Sales overview metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            total_sales = sales_df['sales'].sum() / 1_000_000_000_000
+            st.metric("Total Historical Sales", f"${total_sales:.1f}T")
+        
+        with col2:
+            avg_annual = sales_df.groupby('year')['sales'].sum().mean() / 1_000_000_000
+            st.metric("Avg Annual Sales", f"${avg_annual:.1f}B")
+        
+        with col3:
+            latest_year = sales_df['year'].max()
+            latest_sales = sales_df[sales_df['year'] == latest_year]['sales'].sum() / 1_000_000_000
+            st.metric(f"{latest_year} Sales", f"${latest_sales:.1f}B")
+        
+        with col4:
+            years_span = latest_year - sales_df['year'].min()
+            if years_span > 0:
+                first_year_sales = sales_df[sales_df['year'] == sales_df['year'].min()]['sales'].sum() / 1_000_000_000
+                if first_year_sales > 0:
+                    growth_rate = ((latest_sales / first_year_sales) ** (1/years_span) - 1) * 100
+                else:
+                    growth_rate = 0
+            else:
+                growth_rate = 0
+            st.metric(f"{years_span}-Year CAGR", f"{growth_rate:.1f}%")
+        
+        # Historical trends - RESTORED
+        st.subheader("📈 Historical Sales Trends")
+        annual_sales = sales_df.groupby(['year', 'region'])['sales'].sum().reset_index()
+        
+        # Focus on major regions for cleaner visualization
+        major_regions = ['Worldwide', 'Americas', 'Europe', 'Japan', 'Asia Pacific']
+        major_region_data = annual_sales[annual_sales['region'].isin(major_regions)]
+        
+        if not major_region_data.empty:
+            fig_trends = px.line(
+                major_region_data,
+                x='year',
+                y='sales',
+                color='region',
+                title="Annual Sales Trends by Region (1976-2021)",
+                labels={'sales': 'Sales (Thousands USD)', 'year': 'Year'},
+                height=500
+            )
+            fig_trends.update_traces(line=dict(width=3))
+            fig_trends.update_layout(
+                xaxis_title="Year",
+                yaxis_title="Sales (Millions USD)",
+                legend_title="Region"
+            )
+            st.plotly_chart(fig_trends, use_container_width=True)
+        
+        # Regional breakdown pie chart - RESTORED
+        st.subheader("🥧 Regional Market Share (2021)")
+        latest_year_data = sales_df[sales_df['year'] == latest_year]
+        regional_2021 = latest_year_data.groupby('region')['sales'].sum().sort_values(ascending=False)
+        
+        # Exclude 'Worldwide' from pie chart as it's the total
+        regional_2021_filtered = regional_2021[regional_2021.index != 'Worldwide']
+        
+        if not regional_2021_filtered.empty:
+            fig_pie = px.pie(
+                values=regional_2021_filtered.values,
+                names=regional_2021_filtered.index,
+                title=f"Regional Market Share {latest_year}",
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # Regional breakdown bar chart - RESTORED
+        st.subheader("🌍 Sales by Region (2021)")
+        region_2021 = sales_df[sales_df['year'] == 2021].groupby('region')['sales'].sum().sort_values(ascending=False)
+        
+        if not region_2021.empty:
+            fig_region = px.bar(
+                x=region_2021.index,
+                y=region_2021.values / 1_000_000_000,
+                title="2021 Sales by Region",
+                labels={'y': 'Sales (Billions USD)', 'x': 'Region'},
+                color=region_2021.values,
+                color_continuous_scale='viridis'
+            )
+            fig_region.update_layout(height=400)
+            st.plotly_chart(fig_region, use_container_width=True)
+        
+        # Market insights section - RESTORED
+        st.subheader("📊 Market Insights & Trends")
+        
+        # Historical milestones
+        with st.expander("🏆 Historical Semiconductor Market Milestones"):
+            milestones = [
+                ("1976", "Market tracking begins", "$261M first recorded monthly sales"),
+                ("1980s", "Personal computer boom", "Rapid growth in consumer semiconductors"),
+                ("1990s", "Internet revolution", "Networking and communications surge"),
+                ("2000s", "Mobile revolution", "Smartphone and tablet market explosion"),
+                ("2010s", "Cloud computing era", "Data center and server chip demand"),
+                ("2020s", "AI & pandemic boom", "Unprecedented demand for compute power")
+            ]
+            
+            for period, event, description in milestones:
+                st.markdown(f"**{period}: {event}**")
+                st.text(f"   {description}")
+        
+        # Decade-by-decade analysis - RESTORED
+        st.subheader("📊 Decade-by-Decade Market Evolution")
+        
+        # Create decade analysis
+        sales_df['decade'] = (sales_df['year'] // 10) * 10
+        decade_analysis = sales_df.groupby(['decade', 'region'])['sales'].sum().reset_index()
+        
+        # Focus on major regions and recent decades
+        recent_decades = decade_analysis[
+            (decade_analysis['decade'] >= 1980) & 
+            (decade_analysis['region'].isin(major_regions))
+        ]
+        
+        if not recent_decades.empty:
+            fig_decades = px.bar(
+                recent_decades,
+                x='decade',
+                y='sales',
+                color='region',
+                title="Semiconductor Sales by Decade and Region",
+                labels={'sales': 'Total Sales (Thousands USD)', 'decade': 'Decade'},
+                height=500
+            )
+            fig_decades.update_layout(
+                xaxis_title="Decade",
+                yaxis_title="Sales (Millions USD)",
+                legend_title="Region"
+            )
+            st.plotly_chart(fig_decades, use_container_width=True)
+        
+        # Growth rate analysis - RESTORED
+        st.subheader("📈 Growth Rate Analysis by Region")
+        
+        # Calculate CAGR for each region
+        growth_analysis = []
+        for region in major_regions:
+            region_data = sales_df[sales_df['region'] == region]
+            if len(region_data) > 0:
+                early_years = region_data[region_data['year'] <= 1980]['sales'].sum()
+                recent_years = region_data[region_data['year'] >= 2015]['sales'].sum()
+                
+                if early_years > 0 and recent_years > 0:
+                    years_span = 2020 - 1978  # Approximate span
+                    cagr = ((recent_years / early_years) ** (1/years_span) - 1) * 100
+                    
+                    growth_analysis.append({
+                        'Region': region,
+                        'Early Period Sales (1976-1980)': f"${early_years/1_000_000:.1f}M",
+                        'Recent Period Sales (2015-2021)': f"${recent_years/1_000_000:.1f}M",
+                        'Approximate CAGR': f"{cagr:.1f}%"
+                    })
+        
+        if growth_analysis:
+            growth_df = pd.DataFrame(growth_analysis)
+            st.dataframe(growth_df, use_container_width=True)
+        
+        # Sales forecasting - COMPREHENSIVE MODEL
+        st.subheader("🔮 Advanced Sales Forecasting Model")
         sales_forecast = create_sales_forecasting_model(sales_df, sales_region, forecast_years)
         
         if sales_forecast:
@@ -1250,7 +1362,7 @@ if st.button("🚀 Run Comprehensive Analysis"):
                 y=sales_forecast['linear_regression']['predictions'] / 1_000_000,
                 mode='lines',
                 name='Linear Regression Forecast',
-                line=dict(color='red', dash='dash')
+                line=dict(color='red', dash='dash', width=2)
             ))
             
             fig_forecast.add_trace(go.Scatter(
@@ -1258,14 +1370,15 @@ if st.button("🚀 Run Comprehensive Analysis"):
                 y=sales_forecast['random_forest']['predictions'] / 1_000_000,
                 mode='lines',
                 name='Random Forest Forecast',
-                line=dict(color='green', dash='dot')
+                line=dict(color='green', dash='dot', width=2)
             ))
             
             fig_forecast.update_layout(
                 title=f"Sales Forecast for {sales_region} ({forecast_years} Years)",
                 xaxis_title="Date",
                 yaxis_title="Sales (Millions USD)",
-                height=500
+                height=600,
+                showlegend=True
             )
             
             st.plotly_chart(fig_forecast, use_container_width=True)
@@ -1316,13 +1429,13 @@ if st.button("🚀 Run Comprehensive Analysis"):
                 st.metric("Random Forest Impact", f"${rf_adjusted/1_000_000_000:.1f}B", f"{rf_impact:+.1f}B")
         
         else:
-            st.error("❌ Unable to create forecasting model. Check data quality.")
+            st.error("❌ Unable to create forecasting model. Please check data quality.")
     
     elif analysis_mode == "Trade Data Only":
         st.subheader("🔄 Trade Data Analysis")
         
         if not trade_df.empty:
-            # Trade data analysis would go here
+            # Trade data analysis
             st.success("✅ Trade data analysis functionality")
             
             # Basic trade metrics
@@ -1371,139 +1484,70 @@ if st.button("🚀 Run Comprehensive Analysis"):
                 else:
                     st.error(f"❌ Weak correlation detected (avg: {avg_correlation:.3f})")
                     st.info("💡 Trade and sales data measure different aspects of the semiconductor market")
-            
-            # Sales forecasting - ALWAYS include this
-            st.subheader("🔮 Sales Forecasting Analysis")
-            sales_forecast = create_sales_forecasting_model(sales_df, sales_region, forecast_years)
-            
-            if sales_forecast:
-                # Create integrated visualization
-                fig_integrated = go.Figure()
-                
-                # Historical sales data
-                historical = sales_forecast['historical_data']
-                fig_integrated.add_trace(go.Scatter(
-                    x=historical['date'],
-                    y=historical['sales'] / 1_000_000,
-                    mode='lines',
-                    name='Historical Sales',
-                    line=dict(color='blue', width=2)
-                ))
-                
-                # Sales forecasts
-                future_dates = sales_forecast['future_dates']
-                
-                fig_integrated.add_trace(go.Scatter(
-                    x=future_dates,
-                    y=sales_forecast['linear_regression']['predictions'] / 1_000_000,
-                    mode='lines',
-                    name='Sales Forecast (LR)',
-                    line=dict(color='red', dash='dash')
-                ))
-                
-                fig_integrated.add_trace(go.Scatter(
-                    x=future_dates,
-                    y=sales_forecast['random_forest']['predictions'] / 1_000_000,
-                    mode='lines',
-                    name='Sales Forecast (RF)',
-                    line=dict(color='green', dash='dot')
-                ))
-                
-                fig_integrated.update_layout(
-                    title="Integrated Sales Analysis with Forecasting",
-                    xaxis_title="Date",
-                    yaxis_title="Sales (Millions USD)",
-                    height=600
-                )
-                
-                st.plotly_chart(fig_integrated, use_container_width=True)
-                
-                # Display model performance
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("**Linear Regression Model:**")
-                    st.metric("R² Score", f"{sales_forecast['linear_regression']['r2_score']:.3f}")
-                    st.metric("MAE", f"${sales_forecast['linear_regression']['mae']/1000:.1f}M")
-                
-                with col2:
-                    st.markdown("**Random Forest Model:**")
-                    st.metric("R² Score", f"{sales_forecast['random_forest']['r2_score']:.3f}")
-                    st.metric("MAE", f"${sales_forecast['random_forest']['mae']/1000:.1f}M")
-                
-                # Economic scenario analysis
-                st.subheader("🎯 Economic Scenario Impact")
-                
-                scenario_data = ECONOMIC_SCENARIOS[scenario]
-                
-                # Apply scenario to sales forecast
-                lr_base = sales_forecast['linear_regression']['predictions'][-1]
-                rf_base = sales_forecast['random_forest']['predictions'][-1]
-                
-                lr_adjusted = lr_base * scenario_data['sales_multiplier']
-                rf_adjusted = rf_base * scenario_data['sales_multiplier']
-                
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    st.metric("Scenario", scenario)
-                    st.text(f"Sales Impact: {(scenario_data['sales_multiplier']-1)*100:+.1f}%")
-                
-                with col2:
-                    lr_impact = (lr_adjusted - lr_base) / 1_000_000_000
-                    st.metric("Linear Regression Impact", f"${lr_adjusted/1_000_000_000:.1f}B", f"{lr_impact:+.1f}B")
-                
-                with col3:
-                    rf_impact = (rf_adjusted - rf_base) / 1_000_000_000
-                    st.metric("Random Forest Impact", f"${rf_adjusted/1_000_000_000:.1f}B", f"{rf_impact:+.1f}B")
         
         else:
-            st.warning("⚠️ Trade data not available - showing sales analysis with forecasting")
+            st.warning("⚠️ Trade data not available for integrated analysis")
             
-            # Still provide sales forecasting even without trade data
-            sales_forecast = create_sales_forecasting_model(sales_df, sales_region, forecast_years)
+        # Always include comprehensive sales analysis
+        st.subheader("💰 Sales Analysis Component")
+        
+        # Sales forecasting
+        sales_forecast = create_sales_forecasting_model(sales_df, sales_region, forecast_years)
+        
+        if sales_forecast:
+            # Create integrated visualization
+            fig_integrated = go.Figure()
             
-            if sales_forecast:
-                # Forecast visualization
-                fig_forecast = go.Figure()
-                
-                # Historical data
-                historical = sales_forecast['historical_data']
-                fig_forecast.add_trace(go.Scatter(
-                    x=historical['date'],
-                    y=historical['sales'] / 1_000_000,
-                    mode='lines',
-                    name='Historical Sales',
-                    line=dict(color='blue', width=2)
-                ))
-                
-                # Forecasts
-                future_dates = sales_forecast['future_dates']
-                
-                fig_forecast.add_trace(go.Scatter(
-                    x=future_dates,
-                    y=sales_forecast['linear_regression']['predictions'] / 1_000_000,
-                    mode='lines',
-                    name='Linear Regression Forecast',
-                    line=dict(color='red', dash='dash')
-                ))
-                
-                fig_forecast.add_trace(go.Scatter(
-                    x=future_dates,
-                    y=sales_forecast['random_forest']['predictions'] / 1_000_000,
-                    mode='lines',
-                    name='Random Forest Forecast',
-                    line=dict(color='green', dash='dot')
-                ))
-                
-                fig_forecast.update_layout(
-                    title=f"Sales Forecast for {sales_region} ({forecast_years} Years)",
-                    xaxis_title="Date",
-                    yaxis_title="Sales (Millions USD)",
-                    height=500
-                )
-                
-                st.plotly_chart(fig_forecast, use_container_width=True)
+            # Historical sales data
+            historical = sales_forecast['historical_data']
+            fig_integrated.add_trace(go.Scatter(
+                x=historical['date'],
+                y=historical['sales'] / 1_000_000,
+                mode='lines',
+                name='Historical Sales',
+                line=dict(color='blue', width=2)
+            ))
+            
+            # Sales forecasts
+            future_dates = sales_forecast['future_dates']
+            
+            fig_integrated.add_trace(go.Scatter(
+                x=future_dates,
+                y=sales_forecast['linear_regression']['predictions'] / 1_000_000,
+                mode='lines',
+                name='Sales Forecast (LR)',
+                line=dict(color='red', dash='dash', width=2)
+            ))
+            
+            fig_integrated.add_trace(go.Scatter(
+                x=future_dates,
+                y=sales_forecast['random_forest']['predictions'] / 1_000_000,
+                mode='lines',
+                name='Sales Forecast (RF)',
+                line=dict(color='green', dash='dot', width=2)
+            ))
+            
+            fig_integrated.update_layout(
+                title="Integrated Sales Analysis with Forecasting",
+                xaxis_title="Date",
+                yaxis_title="Sales (Millions USD)",
+                height=600
+            )
+            
+            st.plotly_chart(fig_integrated, use_container_width=True)
+            
+            # Display model performance
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("**Linear Regression Model:**")
+                st.metric("R² Score", f"{sales_forecast['linear_regression']['r2_score']:.3f}")
+                st.metric("MAE", f"${sales_forecast['linear_regression']['mae']/1000:.1f}M")
+            
+            with col2:
+                st.markdown("**Random Forest Model:**")
+                st.metric("R² Score", f"{sales_forecast['random_forest']['r2_score']:.3f}")
+                st.metric("MAE", f"${sales_forecast['random_forest']['mae']/1000:.1f}M")
         
         # Regional breakdown
         st.subheader("🌍 Sales by Region (2021)")
