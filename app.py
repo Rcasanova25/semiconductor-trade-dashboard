@@ -101,12 +101,101 @@ ECONOMIC_SCENARIOS = {
     "Supply Chain Crisis": {"gdp_growth": 0.015, "trade_multiplier": 0.85, "sales_multiplier": 0.9}
 }
 
-# Load semiconductor sales data (simulated based on your Excel file)
+# Load semiconductor sales data from actual Excel file
 @st.cache_data
 def load_sales_data():
-    """Load semiconductor sales data (1976-2021)"""
-    # This simulates the data structure from your Excel file
-    # In practice, you'd upload and parse the actual Excel file
+    """Load semiconductor sales data from GSR1976November2023 1.xls file"""
+    try:
+        # Try to read the uploaded Excel file
+        import xlrd
+        import openpyxl
+        
+        # First try to read with pandas
+        try:
+            # Try different engines for Excel reading
+            df_excel = pd.read_excel('GSR1976November2023 1.xls', sheet_name='Averages 1976 - present', header=None)
+            st.info("✅ Successfully loaded Excel file with pandas")
+        except:
+            st.error("❌ Could not read Excel file. Please ensure GSR1976November2023 1.xls is in your project directory")
+            return create_fallback_sales_data()
+        
+        # Process the Excel data based on the structure we analyzed
+        raw_data = df_excel.values.tolist()
+        
+        months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                 'July', 'August', 'September', 'October', 'November', 'December']
+        regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
+        
+        sales_data = []
+        current_year = None
+        
+        # Process the data row by row
+        for i, row in enumerate(raw_data):
+            if not row or all(pd.isna(cell) for cell in row):
+                continue
+            
+            # Check if this is a year row (year in column 1, index 1)
+            if len(row) > 1 and isinstance(row[1], (int, float)) and not pd.isna(row[1]):
+                potential_year = int(row[1])
+                if 1976 <= potential_year <= 2024:
+                    current_year = potential_year
+                    continue
+            
+            # Check if this is a region row
+            if len(row) > 0 and isinstance(row[0], str) and row[0] in regions and current_year:
+                region = row[0]
+                
+                # For 1976, data starts from March (index 3), for others from January (index 1)
+                start_index = 3 if current_year == 1976 else 1
+                
+                # Extract monthly data
+                for month_idx in range(12):
+                    data_index = start_index + month_idx
+                    
+                    if data_index < len(row):
+                        value = row[data_index]
+                        
+                        if isinstance(value, (int, float)) and not pd.isna(value) and value > 0:
+                            # Calculate actual month
+                            if current_year == 1976:
+                                actual_month = month_idx + 3  # March onwards for 1976
+                                if actual_month > 12:
+                                    continue  # Skip invalid months
+                            else:
+                                actual_month = month_idx + 1  # Normal months
+                            
+                            if 1 <= actual_month <= 12:
+                                sales_data.append({
+                                    'year': current_year,
+                                    'month': actual_month,
+                                    'month_name': months[actual_month - 1],
+                                    'region': region,
+                                    'sales': float(value),  # in thousands USD
+                                    'date': pd.to_datetime(f'{current_year}-{actual_month:02d}-01')
+                                })
+        
+        if sales_data:
+            df_result = pd.DataFrame(sales_data)
+            st.success(f"✅ Processed {len(df_result)} sales records from Excel file")
+            
+            # Show data summary
+            years_range = f"{df_result['year'].min()}-{df_result['year'].max()}"
+            regions_list = df_result['region'].unique()
+            st.info(f"📊 Data covers {years_range}, regions: {', '.join(regions_list)}")
+            
+            return df_result
+        else:
+            st.warning("⚠️ No valid sales data found in Excel file, using fallback data")
+            return create_fallback_sales_data()
+    
+    except Exception as e:
+        st.error(f"❌ Error reading Excel file: {str(e)}")
+        st.info("🔄 Using fallback sales data for demonstration")
+        return create_fallback_sales_data()
+
+def create_fallback_sales_data():
+    """Create fallback sales data if Excel file cannot be read"""
+    st.info("📋 Using simulated sales data based on historical semiconductor market patterns")
     
     # Create sample data based on the structure we analyzed
     years = list(range(1976, 2022))
@@ -124,38 +213,131 @@ def load_sales_data():
         'Worldwide': 250000
     }
     
+    # Historical semiconductor market growth patterns
     for year in years:
-        # Apply historical growth patterns
-        year_factor = ((year - 1976) * 0.08) + 1  # ~8% annual growth
+        # Apply historical growth patterns (~15% CAGR with cycles)
+        year_factor = ((year - 1976) * 0.15) + 1
         
-        # Add cyclical components and major events
-        if year >= 2000:  # Internet boom
-            year_factor *= 1.5
-        if year >= 2008 and year <= 2009:  # Financial crisis
-            year_factor *= 0.8
-        if year >= 2020:  # AI/pandemic boom
-            year_factor *= 2.5
+        # Add major market cycles and events
+        if 1980 <= year <= 1982:  # Early recession
+            year_factor *= 0.85
+        elif 1990 <= year <= 1991:  # Early 90s recession
+            year_factor *= 0.9
+        elif 1995 <= year <= 2000:  # Internet boom
+            year_factor *= 1.4
+        elif 2001 <= year <= 2002:  # Dot-com crash
+            year_factor *= 0.7
+        elif 2008 <= year <= 2009:  # Financial crisis
+            year_factor *= 0.75
+        elif year >= 2020:  # AI/pandemic boom
+            year_factor *= 1.8
         
         for month in months:
-            # Add seasonal patterns
-            seasonal_factor = 1 + 0.1 * np.sin(2 * np.pi * month / 12)
+            # Add seasonal patterns (Q4 typically strongest)
+            seasonal_factor = 1 + 0.15 * np.sin(2 * np.pi * (month - 3) / 12)
             
             for region in regions:
                 base_value = base_values[region]
                 monthly_sales = base_value * year_factor * seasonal_factor
                 
-                # Add some randomness
-                monthly_sales *= (0.9 + 0.2 * np.random.random())
+                # Add market volatility
+                volatility = 0.1 + (0.05 if year >= 2020 else 0)
+                monthly_sales *= (1 + volatility * (2 * np.random.random() - 1))
                 
                 sales_data.append({
                     'year': year,
                     'month': month,
+                    'month_name': ['January', 'February', 'March', 'April', 'May', 'June',
+                                  'July', 'August', 'September', 'October', 'November', 'December'][month-1],
                     'region': region,
-                    'sales': monthly_sales,  # in thousands USD
+                    'sales': max(0, monthly_sales),  # in thousands USD
                     'date': pd.to_datetime(f'{year}-{month:02d}-01')
                 })
     
     return pd.DataFrame(sales_data)
+
+@st.cache_data
+def load_sales_data_with_file_upload():
+    """Alternative method: Load sales data with file upload widget"""
+    uploaded_file = st.file_uploader(
+        "Upload GSR1976November2023 1.xls file", 
+        type=['xls', 'xlsx'],
+        help="Upload the semiconductor sales data Excel file"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Read the uploaded Excel file
+            df_excel = pd.read_excel(uploaded_file, sheet_name='Averages 1976 - present', header=None)
+            
+            # Process using the same logic as above
+            raw_data = df_excel.values.tolist()
+            
+            months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                     'July', 'August', 'September', 'October', 'November', 'December']
+            regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
+            
+            sales_data = []
+            current_year = None
+            
+            # Process the data row by row
+            for i, row in enumerate(raw_data):
+                if not row or all(pd.isna(cell) for cell in row if cell is not None):
+                    continue
+                
+                # Check if this is a year row
+                if len(row) > 1 and isinstance(row[1], (int, float)) and not pd.isna(row[1]):
+                    potential_year = int(row[1])
+                    if 1976 <= potential_year <= 2024:
+                        current_year = potential_year
+                        continue
+                
+                # Check if this is a region row
+                if len(row) > 0 and isinstance(row[0], str) and row[0] in regions and current_year:
+                    region = row[0]
+                    
+                    # For 1976, data starts from March (index 3), for others from January (index 1)
+                    start_index = 3 if current_year == 1976 else 1
+                    
+                    # Extract monthly data
+                    for month_idx in range(12):
+                        data_index = start_index + month_idx
+                        
+                        if data_index < len(row):
+                            value = row[data_index]
+                            
+                            if isinstance(value, (int, float)) and not pd.isna(value) and value > 0:
+                                # Calculate actual month
+                                if current_year == 1976:
+                                    actual_month = month_idx + 3
+                                    if actual_month > 12:
+                                        continue
+                                else:
+                                    actual_month = month_idx + 1
+                                
+                                if 1 <= actual_month <= 12:
+                                    sales_data.append({
+                                        'year': current_year,
+                                        'month': actual_month,
+                                        'month_name': months[actual_month - 1],
+                                        'region': region,
+                                        'sales': float(value),
+                                        'date': pd.to_datetime(f'{current_year}-{actual_month:02d}-01')
+                                    })
+            
+            if sales_data:
+                df_result = pd.DataFrame(sales_data)
+                st.success(f"✅ Successfully processed {len(df_result)} sales records from uploaded file")
+                return df_result
+            else:
+                st.error("❌ No valid data found in uploaded file")
+                return pd.DataFrame()
+                
+        except Exception as e:
+            st.error(f"❌ Error processing uploaded file: {str(e)}")
+            return pd.DataFrame()
+    
+    return pd.DataFrame()
 
 # Trade data fetching functions (simplified from previous version)
 @st.cache_data
@@ -188,31 +370,105 @@ def fetch_trade_data_single(hs_code, year, trade_type="exports"):
         if not isinstance(data, list) or len(data) < 2:
             return pd.DataFrame()
         
-        df = pd.DataFrame(data[1:], columns=data[0])
-        df[value_field] = pd.to_numeric(df[value_field], errors='coerce')
-        df["MONTH"] = pd.to_numeric(df["MONTH"], errors='coerce')
-        df["YEAR"] = pd.to_numeric(df["YEAR"], errors='coerce')
-        df = df.dropna(subset=[value_field, "MONTH", "YEAR"])
+        # Handle duplicate column names more carefully
+        headers = data[0]
+        seen = {}
+        unique_headers = []
+        for header in headers:
+            if header in seen:
+                seen[header] += 1
+                unique_headers.append(f"{header}_{seen[header]}")
+            else:
+                seen[header] = 0
+                unique_headers.append(header)
+        
+        df = pd.DataFrame(data[1:], columns=unique_headers)
+        
+        # Find the correct value field (handle duplicates)
+        actual_value_field = value_field
+        if value_field not in df.columns:
+            # Look for the field with _1, _2, etc.
+            for col in df.columns:
+                if col.startswith(value_field):
+                    actual_value_field = col
+                    break
+        
+        if actual_value_field not in df.columns:
+            st.warning(f"Value field {value_field} not found in columns: {df.columns.tolist()}")
+            return pd.DataFrame()
+        
+        # Convert data types more carefully
+        df[actual_value_field] = pd.to_numeric(df[actual_value_field], errors='coerce')
+        
+        # Handle MONTH and YEAR columns (they might have duplicates too)
+        month_col = "MONTH"
+        year_col = "YEAR"
+        
+        if "MONTH" not in df.columns:
+            for col in df.columns:
+                if col.startswith("MONTH"):
+                    month_col = col
+                    break
+        
+        if "YEAR" not in df.columns:
+            for col in df.columns:
+                if col.startswith("YEAR"):
+                    year_col = col
+                    break
+        
+        if month_col in df.columns and year_col in df.columns:
+            df[month_col] = pd.to_numeric(df[month_col], errors='coerce')
+            df[year_col] = pd.to_numeric(df[year_col], errors='coerce')
+            df = df.dropna(subset=[actual_value_field, month_col, year_col])
+        else:
+            st.warning(f"Month or Year columns not found. Available columns: {df.columns.tolist()}")
+            return pd.DataFrame()
         
         if df.empty:
             return pd.DataFrame()
         
-        df["DATE"] = pd.to_datetime(
-            df["YEAR"].astype(str) + df["MONTH"].astype(str).str.zfill(2) + "01", 
-            format="%Y%m%d", errors='coerce'
-        )
+        # Create date column more safely
+        try:
+            df["DATE"] = pd.to_datetime(
+                df[year_col].astype(str) + "-" + df[month_col].astype(str).str.zfill(2) + "-01", 
+                format="%Y-%m-%d", errors='coerce'
+            )
+        except Exception as e:
+            st.warning(f"Date creation failed: {e}")
+            return pd.DataFrame()
+        
         df = df.dropna(subset=["DATE"])
-        df["TRADE_VALUE"] = df[value_field]
+        
+        if df.empty:
+            return pd.DataFrame()
+        
+        # Standardize columns
+        df["TRADE_VALUE"] = df[actual_value_field]
         df["HS_CODE"] = hs_code
         df["TRADE_TYPE"] = trade_type.title()
-        df["COUNTRY_NAME"] = df["CTY_CODE"].map(COUNTRY_CODES).fillna(
-            df["CTY_CODE"].apply(lambda x: f"Unknown Country - {x}")
-        )
+        
+        # Handle country codes more safely
+        cty_code_col = "CTY_CODE"
+        if "CTY_CODE" not in df.columns:
+            for col in df.columns:
+                if col.startswith("CTY_CODE"):
+                    cty_code_col = col
+                    break
+        
+        if cty_code_col in df.columns:
+            df["COUNTRY_NAME"] = df[cty_code_col].astype(str).map(COUNTRY_CODES).fillna(
+                df[cty_code_col].astype(str).apply(lambda x: f"Unknown Country - {x}")
+            )
+            # Keep the original country code column
+            df["CTY_CODE"] = df[cty_code_col]
+        else:
+            df["COUNTRY_NAME"] = "Unknown"
+            df["CTY_CODE"] = "999"
         
         return df
         
     except Exception as e:
-        st.error(f"Failed to fetch {trade_type} data for HS {hs_code}, year {year}: {e}")
+        st.warning(f"Failed to fetch {trade_type} data for HS {hs_code}, year {year}: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -221,24 +477,128 @@ def fetch_multi_trade_data(hs_codes, years, trade_types):
     all_data = []
     total_requests = len(hs_codes) * len(years) * len(trade_types)
     progress_bar = st.progress(0)
+    status_text = st.empty()
     current_request = 0
+    
+    successful_requests = 0
+    failed_requests = 0
     
     for hs_code in hs_codes:
         for year in years:
             for trade_type in trade_types:
+                status_text.text(f"Fetching {trade_type} data for HS {hs_code}, year {year}... ({current_request + 1}/{total_requests})")
+                
                 df = fetch_trade_data_single(hs_code, str(year), trade_type)
+                
                 if not df.empty:
                     all_data.append(df)
+                    successful_requests += 1
+                else:
+                    failed_requests += 1
                 
                 current_request += 1
                 progress_bar.progress(current_request / total_requests)
+                
+                # Add small delay to avoid API rate limiting
+                time.sleep(0.1)
     
     progress_bar.empty()
+    status_text.empty()
+    
+    # Display summary
+    if successful_requests > 0:
+        st.success(f"✅ Successfully fetched {successful_requests} datasets")
+    
+    if failed_requests > 0:
+        st.warning(f"⚠️ Failed to fetch {failed_requests} datasets")
+        
+        # Show common troubleshooting tips
+        with st.expander("🔧 Troubleshooting Trade Data Issues"):
+            st.markdown("**Common causes for trade data fetch failures:**")
+            st.text("• API rate limiting (Census Bureau limits requests)")
+            st.text("• No data available for that specific HS code/year combination")
+            st.text("• API response format changes")
+            st.text("• Network connectivity issues")
+            st.text("")
+            st.markdown("**Solutions:**")
+            st.text("• Try different year ranges (2020-2022 often has more data)")
+            st.text("• Use smaller year ranges to reduce API load")
+            st.text("• Try again later if rate limited")
+            st.text("• Check Census Bureau API status")
+            
+            # Add API test button
+            if st.button("🧪 Test API Connection"):
+                test_api_connection()
     
     if not all_data:
         return pd.DataFrame()
     
-    return pd.concat(all_data, ignore_index=True)
+    # Combine all data
+    try:
+        combined_df = pd.concat(all_data, ignore_index=True)
+        return combined_df
+    except Exception as e:
+        st.error(f"Error combining trade data: {e}")
+        return pd.DataFrame()
+
+def test_api_connection():
+    """Test the Census Bureau API connection"""
+    st.info("🧪 Testing Census Bureau API connection...")
+    
+    test_url = "https://api.census.gov/data/timeseries/intltrade/exports/hs"
+    test_params = {
+        "get": "CTY_CODE,ALL_VAL_MO,YEAR,MONTH,E_COMMODITY",
+        "E_COMMODITY": "8541",
+        "YEAR": "2020",
+        "CTY_CODE": "5700",  # China
+        "key": API_KEY
+    }
+    
+    try:
+        response = requests.get(test_url, params=test_params, timeout=10)
+        
+        st.text(f"API Response Status: {response.status_code}")
+        st.text(f"API URL: {response.url}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            st.success("✅ API connection successful!")
+            st.text(f"Response type: {type(data)}")
+            st.text(f"Response length: {len(data) if isinstance(data, list) else 'Not a list'}")
+            
+            if isinstance(data, list) and len(data) > 0:
+                st.text(f"Headers: {data[0] if len(data) > 0 else 'No headers'}")
+                st.text(f"Sample data: {data[1] if len(data) > 1 else 'No data rows'}")
+            
+        else:
+            st.error(f"❌ API error: {response.status_code}")
+            st.text(f"Response: {response.text[:200]}...")
+            
+    except Exception as e:
+        st.error(f"❌ API connection failed: {e}")
+
+# Enhanced error handling for sales data processing
+def debug_sales_data(sales_df):
+    """Debug function to analyze sales data quality"""
+    if sales_df.empty:
+        return
+    
+    with st.expander("🔍 Sales Data Debug Information"):
+        st.markdown("**Data Structure:**")
+        st.text(f"Shape: {sales_df.shape}")
+        st.text(f"Columns: {sales_df.columns.tolist()}")
+        st.text(f"Data types: {sales_df.dtypes.to_dict()}")
+        
+        st.markdown("**Data Quality:**")
+        st.text(f"Missing values: {sales_df.isnull().sum().sum()}")
+        st.text(f"Duplicate rows: {sales_df.duplicated().sum()}")
+        
+        st.markdown("**Data Ranges:**")
+        st.text(f"Years: {sales_df['year'].min()} - {sales_df['year'].max()}")
+        st.text(f"Regions: {sales_df['region'].unique()}")
+        
+        st.markdown("**Sample Statistics:**")
+        st.dataframe(sales_df.describe(), use_container_width=True)
 
 # ADVANCED ANALYSIS FUNCTIONS
 
@@ -522,6 +882,21 @@ st.markdown("**Integrated analysis of trade flows and market sales with advanced
 
 # Sidebar configuration
 with st.sidebar:
+    st.subheader("📊 Data Sources")
+    
+    # Sales data source selection
+    sales_data_source = st.radio(
+        "Sales Data Source:",
+        ["Use Excel File in Project", "Upload Excel File", "Use Demo Data"]
+    )
+    
+    if sales_data_source == "Upload Excel File":
+        st.info("💡 Upload your GSR1976November2023 1.xls file below")
+    elif sales_data_source == "Use Excel File in Project":
+        st.info("📁 Looking for GSR1976November2023 1.xls in project directory")
+    else:
+        st.info("🧪 Using simulated data for demonstration")
+    
     st.subheader("📊 Analysis Options")
     
     analysis_mode = st.selectbox(
@@ -549,9 +924,69 @@ with st.sidebar:
 # Main analysis
 if st.button("🚀 Run Comprehensive Analysis"):
     
-    # Load sales data
-    sales_df = load_sales_data()
-    st.success(f"✅ Loaded sales data: {len(sales_df)} records from 1976-2021")
+    # Load sales data based on source selection
+    if sales_data_source == "Upload Excel File":
+        st.subheader("📁 Upload Sales Data File")
+        sales_df = load_sales_data_with_file_upload()
+        
+        if sales_df.empty:
+            st.warning("⚠️ No file uploaded or processed. Using demo data instead.")
+            sales_df = create_fallback_sales_data()
+    
+    elif sales_data_source == "Use Excel File in Project":
+        sales_df = load_sales_data()
+    
+    else:  # Use Demo Data
+        sales_df = create_fallback_sales_data()
+    
+    if not sales_df.empty:
+        # Display data summary
+        years_range = f"{sales_df['year'].min()}-{sales_df['year'].max()}"
+        regions_list = ', '.join(sales_df['region'].unique())
+        total_records = len(sales_df)
+        
+        st.success(f"✅ Loaded sales data: {total_records:,} records covering {years_range}")
+        
+        # Show data quality metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Years of Data", sales_df['year'].nunique())
+        
+        with col2:
+            st.metric("Regions Covered", sales_df['region'].nunique())
+        
+        with col3:
+            latest_year_data = sales_df[sales_df['year'] == sales_df['year'].max()]
+            latest_months = latest_year_data['month'].nunique()
+            st.metric(f"Latest Year ({sales_df['year'].max()}) Months", latest_months)
+        
+        with col4:
+            total_sales = sales_df['sales'].sum() / 1_000_000_000_000  # Convert to trillions
+            st.metric("Total Historical Sales", f"${total_sales:.1f}T")
+        
+        # Show sample of the actual data
+        with st.expander("🔍 View Sample Sales Data"):
+            st.markdown("**Recent Data (Last 20 records):**")
+            sample_data = sales_df.tail(20)[['year', 'month_name', 'region', 'sales']].copy()
+            sample_data['sales_millions'] = (sample_data['sales'] / 1000).round(1)
+            sample_data = sample_data.drop('sales', axis=1)
+            st.dataframe(sample_data, use_container_width=True)
+            
+            st.markdown("**Data Quality Check:**")
+            quality_metrics = {
+                "Total Records": len(sales_df),
+                "Missing Values": sales_df.isnull().sum().sum(),
+                "Duplicate Records": sales_df.duplicated().sum(),
+                "Year Range": f"{sales_df['year'].min()} - {sales_df['year'].max()}",
+                "Regions": len(sales_df['region'].unique()),
+                "Average Monthly Sales (Worldwide)": f"${sales_df[sales_df['region']=='Worldwide']['sales'].mean()/1000:.1f}M"
+            }
+            
+            quality_df = pd.DataFrame([
+                {"Metric": k, "Value": v} for k, v in quality_metrics.items()
+            ])
+            st.dataframe(quality_df, use_container_width=True)
     
     trade_df = pd.DataFrame()
     
@@ -567,22 +1002,52 @@ if st.button("🚀 Run Comprehensive Analysis"):
             years = list(range(trade_years[0], trade_years[1] + 1))
             hs_codes = ["8541", "8542"]
             
+            st.info(f"🔄 Fetching trade data for years {trade_years[0]}-{trade_years[1]}...")
             trade_df = fetch_multi_trade_data(hs_codes, years, trade_types)
             
             if not trade_df.empty:
                 st.success(f"✅ Loaded trade data: {len(trade_df)} records")
+                
+                # Show basic trade data metrics
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Trade Records", len(trade_df))
+                with col2:
+                    st.metric("Countries", trade_df['CTY_CODE'].nunique())
+                with col3:
+                    total_trade = trade_df['TRADE_VALUE'].sum() / 1_000_000_000
+                    st.metric("Total Trade Value", f"${total_trade:.1f}B")
+                with col4:
+                    avg_monthly = trade_df.groupby(['YEAR', 'MONTH'])['TRADE_VALUE'].sum().mean() / 1_000_000
+                    st.metric("Avg Monthly Trade", f"${avg_monthly:.1f}M")
             else:
-                st.warning("⚠️ No trade data retrieved")
+                st.warning("⚠️ No trade data retrieved - continuing with sales-only analysis")
+                
+                # Provide helpful suggestions
+                st.info("💡 **Try these alternatives:**")
+                st.text("• Select different years (2020-2022 often has more data)")
+                st.text("• Try 'Sales Data Only' analysis instead")
+                st.text("• Check API connection with the test button below")
+                
+                # Add API test option
+                if st.button("🧪 Test Census API Connection"):
+                    test_api_connection()
     
-    # Analysis based on mode
-    if analysis_mode == "Sales Data Only":
+    # Analysis based on mode (with fallbacks)
+    if analysis_mode == "Sales Data Only" or (analysis_mode == "Integrated Trade & Sales" and trade_df.empty):
+        if analysis_mode == "Integrated Trade & Sales" and trade_df.empty:
+            st.warning("⚠️ Trade data not available - showing sales analysis only")
+        
         st.subheader("💰 Semiconductor Sales Analysis (1976-2021)")
+        
+        # Add sales data debug option
+        debug_sales_data(sales_df)
         
         # Sales overview
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            total_sales = sales_df['sales'].sum() / 1_000_000_000
+            total_sales = sales_df['sales'].sum() / 1_000_000_000_000
             st.metric("Total Historical Sales", f"${total_sales:.1f}T")
         
         with col2:
@@ -595,8 +1060,97 @@ if st.button("🚀 Run Comprehensive Analysis"):
             st.metric(f"{latest_year} Sales", f"${latest_sales:.1f}B")
         
         with col4:
-            growth_rate = ((latest_sales / (sales_df[sales_df['year'] == 1976]['sales'].sum() / 1_000_000_000)) ** (1/45) - 1) * 100
-            st.metric("45-Year CAGR", f"{growth_rate:.1f}%")
+            years_span = latest_year - sales_df['year'].min()
+            growth_rate = ((latest_sales / (sales_df[sales_df['year'] == sales_df['year'].min()]['sales'].sum() / 1_000_000_000)) ** (1/years_span) - 1) * 100
+            st.metric(f"{years_span}-Year CAGR", f"{growth_rate:.1f}%")
+        
+        # Market insights section
+        st.subheader("📊 Market Insights & Trends")
+        
+        # Historical milestones
+        with st.expander("🏆 Historical Semiconductor Market Milestones"):
+            milestones = [
+                ("1976", "Market tracking begins", "$261M first recorded monthly sales"),
+                ("1980s", "Personal computer boom", "Rapid growth in consumer semiconductors"),
+                ("1990s", "Internet revolution", "Networking and communications surge"),
+                ("2000s", "Mobile revolution", "Smartphone and tablet market explosion"),
+                ("2010s", "Cloud computing era", "Data center and server chip demand"),
+                ("2020s", "AI & pandemic boom", "Unprecedented demand for compute power")
+            ]
+            
+            for period, event, description in milestones:
+                st.markdown(f"**{period}: {event}**")
+                st.text(f"   {description}")
+        
+        # Regional market evolution
+        st.subheader("🌍 Regional Market Evolution")
+        
+        # Create decade-by-decade analysis
+        sales_df['decade'] = (sales_df['year'] // 10) * 10
+        decade_analysis = sales_df.groupby(['decade', 'region'])['sales'].sum().reset_index()
+        
+        # Focus on major regions and recent decades
+        major_regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
+        recent_decades = decade_analysis[
+            (decade_analysis['decade'] >= 1980) & 
+            (decade_analysis['region'].isin(major_regions))
+        ]
+        
+        if not recent_decades.empty:
+            fig_decades = px.bar(
+                recent_decades,
+                x='decade',
+                y='sales',
+                color='region',
+                title="Semiconductor Sales by Decade and Region",
+                labels={'sales': 'Total Sales (Thousands USD)', 'decade': 'Decade'}
+            )
+            fig_decades.update_layout(height=500)
+            st.plotly_chart(fig_decades, use_container_width=True)
+        
+        # Regional breakdown pie chart
+        st.subheader("🥧 Regional Market Share (2021)")
+        latest_year_data = sales_df[sales_df['year'] == latest_year]
+        regional_2021 = latest_year_data.groupby('region')['sales'].sum().sort_values(ascending=False)
+        
+        # Exclude 'Worldwide' from pie chart as it's the total
+        regional_2021_filtered = regional_2021[regional_2021.index != 'Worldwide']
+        
+        if not regional_2021_filtered.empty:
+            fig_pie = px.pie(
+                values=regional_2021_filtered.values,
+                names=regional_2021_filtered.index,
+                title=f"Regional Market Share {latest_year}",
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+            st.plotly_chart(fig_pie, use_container_width=True)
+        
+        # Growth rate analysis
+        st.subheader("📈 Growth Rate Analysis by Region")
+        
+        # Calculate CAGR for each region
+        growth_analysis = []
+        for region in major_regions:
+            region_data = sales_df[sales_df['region'] == region]
+            if len(region_data) > 0:
+                early_years = region_data[region_data['year'] <= 1980]['sales'].sum()
+                recent_years = region_data[region_data['year'] >= 2015]['sales'].sum()
+                
+                if early_years > 0 and recent_years > 0:
+                    years_span = 2020 - 1978  # Approximate span
+                    cagr = ((recent_years / early_years) ** (1/years_span) - 1) * 100
+                    
+                    growth_analysis.append({
+                        'Region': region,
+                        'Early Period Sales (1976-1980)': f"${early_years/1_000_000:.1f}M",
+                        'Recent Period Sales (2015-2021)': f"${recent_years/1_000_000:.1f}M",
+                        'Approximate CAGR': f"{cagr:.1f}%"
+                    })
+        
+        if growth_analysis:
+            growth_df = pd.DataFrame(growth_analysis)
+            st.dataframe(growth_df, use_container_width=True)
         
         # Regional breakdown
         st.subheader("🌍 Sales by Region (2021)")
