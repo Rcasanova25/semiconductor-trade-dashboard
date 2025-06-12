@@ -13,5 +13,5 @@ plotly>=5.15.0
 # Time Series and Statistical Analysis
 scipy>=1.11.0
 
-# Optional: Enhanced visualization and performance
+# Data visualization
 seaborn>=0.12.0
