@@ -257,8 +257,78 @@ def create_fallback_sales_data():
     return pd.DataFrame(sales_data)
 
 @st.cache_data
+def process_uploaded_excel_file(file_contents, file_name):
+    """Process uploaded Excel file contents (cached function without widgets)"""
+    try:
+        # Read the uploaded Excel file
+        df_excel = pd.read_excel(file_contents, sheet_name='Averages 1976 - present', header=None)
+        
+        # Process using the same logic as load_sales_data
+        raw_data = df_excel.values.tolist()
+        
+        months = ['January', 'February', 'March', 'April', 'May', 'June', 
+                 'July', 'August', 'September', 'October', 'November', 'December']
+        regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
+        
+        sales_data = []
+        current_year = None
+        
+        # Process the data row by row
+        for i, row in enumerate(raw_data):
+            if not row or all(pd.isna(cell) for cell in row if cell is not None):
+                continue
+            
+            # Check if this is a year row
+            if len(row) > 1 and isinstance(row[1], (int, float)) and not pd.isna(row[1]):
+                potential_year = int(row[1])
+                if 1976 <= potential_year <= 2024:
+                    current_year = potential_year
+                    continue
+            
+            # Check if this is a region row
+            if len(row) > 0 and isinstance(row[0], str) and row[0] in regions and current_year:
+                region = row[0]
+                
+                # For 1976, data starts from March (index 3), for others from January (index 1)
+                start_index = 3 if current_year == 1976 else 1
+                
+                # Extract monthly data
+                for month_idx in range(12):
+                    data_index = start_index + month_idx
+                    
+                    if data_index < len(row):
+                        value = row[data_index]
+                        
+                        if isinstance(value, (int, float)) and not pd.isna(value) and value > 0:
+                            # Calculate actual month
+                            if current_year == 1976:
+                                actual_month = month_idx + 3
+                                if actual_month > 12:
+                                    continue
+                            else:
+                                actual_month = month_idx + 1
+                            
+                            if 1 <= actual_month <= 12:
+                                sales_data.append({
+                                    'year': current_year,
+                                    'month': actual_month,
+                                    'month_name': months[actual_month - 1],
+                                    'region': region,
+                                    'sales': float(value),
+                                    'date': pd.to_datetime(f'{current_year}-{actual_month:02d}-01')
+                                })
+        
+        if sales_data:
+            df_result = pd.DataFrame(sales_data)
+            return df_result, f"Successfully processed {len(df_result)} sales records from {file_name}"
+        else:
+            return pd.DataFrame(), "No valid data found in uploaded file"
+            
+    except Exception as e:
+        return pd.DataFrame(), f"Error processing uploaded file: {str(e)}"
+
 def load_sales_data_with_file_upload():
-    """Alternative method: Load sales data with file upload widget"""
+    """Load sales data with file upload widget (not cached)"""
     uploaded_file = st.file_uploader(
         "Upload GSR1976November2023 1.xls file", 
         type=['xls', 'xlsx'],
@@ -266,75 +336,14 @@ def load_sales_data_with_file_upload():
     )
     
     if uploaded_file is not None:
-        try:
-            # Read the uploaded Excel file
-            df_excel = pd.read_excel(uploaded_file, sheet_name='Averages 1976 - present', header=None)
-            
-            # Process using the same logic as above
-            raw_data = df_excel.values.tolist()
-            
-            months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                     'July', 'August', 'September', 'October', 'November', 'December']
-            regions = ['Americas', 'Europe', 'Japan', 'Asia Pacific', 'Worldwide']
-            
-            sales_data = []
-            current_year = None
-            
-            # Process the data row by row
-            for i, row in enumerate(raw_data):
-                if not row or all(pd.isna(cell) for cell in row if cell is not None):
-                    continue
-                
-                # Check if this is a year row
-                if len(row) > 1 and isinstance(row[1], (int, float)) and not pd.isna(row[1]):
-                    potential_year = int(row[1])
-                    if 1976 <= potential_year <= 2024:
-                        current_year = potential_year
-                        continue
-                
-                # Check if this is a region row
-                if len(row) > 0 and isinstance(row[0], str) and row[0] in regions and current_year:
-                    region = row[0]
-                    
-                    # For 1976, data starts from March (index 3), for others from January (index 1)
-                    start_index = 3 if current_year == 1976 else 1
-                    
-                    # Extract monthly data
-                    for month_idx in range(12):
-                        data_index = start_index + month_idx
-                        
-                        if data_index < len(row):
-                            value = row[data_index]
-                            
-                            if isinstance(value, (int, float)) and not pd.isna(value) and value > 0:
-                                # Calculate actual month
-                                if current_year == 1976:
-                                    actual_month = month_idx + 3
-                                    if actual_month > 12:
-                                        continue
-                                else:
-                                    actual_month = month_idx + 1
-                                
-                                if 1 <= actual_month <= 12:
-                                    sales_data.append({
-                                        'year': current_year,
-                                        'month': actual_month,
-                                        'month_name': months[actual_month - 1],
-                                        'region': region,
-                                        'sales': float(value),
-                                        'date': pd.to_datetime(f'{current_year}-{actual_month:02d}-01')
-                                    })
-            
-            if sales_data:
-                df_result = pd.DataFrame(sales_data)
-                st.success(f"✅ Successfully processed {len(df_result)} sales records from uploaded file")
-                return df_result
-            else:
-                st.error("❌ No valid data found in uploaded file")
-                return pd.DataFrame()
-                
-        except Exception as e:
-            st.error(f"❌ Error processing uploaded file: {str(e)}")
+        # Process the uploaded file using cached function
+        df_result, message = process_uploaded_excel_file(uploaded_file, uploaded_file.name)
+        
+        if not df_result.empty:
+            st.success(f"✅ {message}")
+            return df_result
+        else:
+            st.error(f"❌ {message}")
             return pd.DataFrame()
     
     return pd.DataFrame()
@@ -542,9 +551,7 @@ def fetch_multi_trade_data(hs_codes, years, trade_types):
         return pd.DataFrame()
 
 def test_api_connection():
-    """Test the Census Bureau API connection"""
-    st.info("🧪 Testing Census Bureau API connection...")
-    
+    """Test the Census Bureau API connection (not cached to avoid widget issues)"""
     test_url = "https://api.census.gov/data/timeseries/intltrade/exports/hs"
     test_params = {
         "get": "CTY_CODE,ALL_VAL_MO,YEAR,MONTH,E_COMMODITY",
@@ -554,32 +561,40 @@ def test_api_connection():
         "key": API_KEY
     }
     
-    try:
-        response = requests.get(test_url, params=test_params, timeout=10)
-        
-        st.text(f"API Response Status: {response.status_code}")
-        st.text(f"API URL: {response.url}")
-        
-        if response.status_code == 200:
-            data = response.json()
-            st.success("✅ API connection successful!")
-            st.text(f"Response type: {type(data)}")
-            st.text(f"Response length: {len(data) if isinstance(data, list) else 'Not a list'}")
+    with st.spinner("🧪 Testing Census Bureau API connection..."):
+        try:
+            response = requests.get(test_url, params=test_params, timeout=10)
             
-            if isinstance(data, list) and len(data) > 0:
-                st.text(f"Headers: {data[0] if len(data) > 0 else 'No headers'}")
-                st.text(f"Sample data: {data[1] if len(data) > 1 else 'No data rows'}")
+            st.text(f"API Response Status: {response.status_code}")
+            st.text(f"API URL: {response.url}")
             
-        else:
-            st.error(f"❌ API error: {response.status_code}")
-            st.text(f"Response: {response.text[:200]}...")
+            if response.status_code == 200:
+                data = response.json()
+                st.success("✅ API connection successful!")
+                st.text(f"Response type: {type(data)}")
+                st.text(f"Response length: {len(data) if isinstance(data, list) else 'Not a list'}")
+                
+                if isinstance(data, list) and len(data) > 0:
+                    st.text(f"Headers: {data[0] if len(data) > 0 else 'No headers'}")
+                    st.text(f"Sample data: {data[1] if len(data) > 1 else 'No data rows'}")
+                
+            else:
+                st.error(f"❌ API error: {response.status_code}")
+                st.text(f"Response: {response.text[:200]}...")
+                
+        except Exception as e:
+            st.error(f"❌ API connection failed: {e}")
             
-    except Exception as e:
-        st.error(f"❌ API connection failed: {e}")
+            # Provide helpful troubleshooting info
+            st.markdown("**Possible solutions:**")
+            st.text("• Check your internet connection")
+            st.text("• Verify your Census Bureau API key is valid")
+            st.text("• Try again later (API might be temporarily down)")
+            st.text("• Use sales data analysis instead")
 
 # Enhanced error handling for sales data processing
 def debug_sales_data(sales_df):
-    """Debug function to analyze sales data quality"""
+    """Debug function to analyze sales data quality (not cached to avoid widget issues)"""
     if sales_df.empty:
         return
     
@@ -595,10 +610,17 @@ def debug_sales_data(sales_df):
         
         st.markdown("**Data Ranges:**")
         st.text(f"Years: {sales_df['year'].min()} - {sales_df['year'].max()}")
-        st.text(f"Regions: {sales_df['region'].unique()}")
+        st.text(f"Regions: {', '.join(sales_df['region'].unique())}")
         
         st.markdown("**Sample Statistics:**")
-        st.dataframe(sales_df.describe(), use_container_width=True)
+        numeric_cols = sales_df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 0:
+            st.dataframe(sales_df[numeric_cols].describe(), use_container_width=True)
+        
+        st.markdown("**Recent Data Sample:**")
+        recent_sample = sales_df.tail(10)[['year', 'month_name', 'region', 'sales']]
+        recent_sample['sales_millions'] = (recent_sample['sales'] / 1000).round(2)
+        st.dataframe(recent_sample, use_container_width=True)
 
 # ADVANCED ANALYSIS FUNCTIONS
 
